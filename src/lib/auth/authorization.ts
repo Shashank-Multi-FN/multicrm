@@ -3,6 +3,7 @@
 import { MembershipRole, PlatformRole } from "@prisma/client/index";
 import { db } from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth/session";
+import { AuthorizationError } from "@/lib/auth/errors";
 
 export type TenantContext = {
   userId: string;
@@ -10,13 +11,6 @@ export type TenantContext = {
   organizationRole: MembershipRole;
   crmId: string;
 };
-
-export class AuthorizationError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "AuthorizationError";
-  }
-}
 
 export async function requireAuthenticatedUser() {
   const user = await getCurrentUser();
@@ -46,6 +40,28 @@ export async function requireOrganizationMembership(organizationId: string) {
         userId: user.id,
         organizationId,
       },
+    },
+    select: {
+      id: true,
+      userId: true,
+      organizationId: true,
+      role: true,
+      createdAt: true,
+    },
+  });
+
+  if (!membership) {
+    throw new AuthorizationError("Organization membership required");
+  }
+
+  return membership;
+}
+
+export async function requireAnyOrganizationMembership() {
+  const user = await requireAuthenticatedUser();
+  const membership = await db.membership.findFirst({
+    where: {
+      userId: user.id,
     },
     select: {
       id: true,

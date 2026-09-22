@@ -1,6 +1,25 @@
 import type { ReactNode } from "react";
+import { redirect } from "next/navigation";
+import { redirectAuthenticatedUser } from "@/lib/auth/actions";
+import { requireAnyOrganizationMembership } from "@/lib/auth/authorization";
+import { AuthorizationError } from "@/lib/auth/errors";
 
-export default function CrmLayout({ children }: { children: ReactNode }) {
+export default async function CrmLayout({
+  children,
+}: {
+  children: ReactNode;
+}) {
+  try {
+    await requireAnyOrganizationMembership();
+  } catch (error) {
+    if (!(error instanceof AuthorizationError)) {
+      throw error;
+    }
+
+    await redirectAuthenticatedUser();
+    redirect("/login");
+  }
+
   return (
     <div className="flex min-h-full flex-col">
       <header className="border-b border-black/[.08] px-6 py-5 dark:border-white/[.145]">
