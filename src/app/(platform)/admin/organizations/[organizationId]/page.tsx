@@ -1,6 +1,10 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { db } from "@/lib/db";
+import {
+  AddMemberForm,
+  MembershipRow,
+} from "../membership-forms";
 
 type OrganizationDetailPageProps = {
   params: Promise<{ organizationId: string }>;
@@ -19,6 +23,7 @@ export default async function OrganizationDetailPage({
       memberships: {
         orderBy: { createdAt: "asc" },
         select: {
+          id: true,
           role: true,
           createdAt: true,
           user: {
@@ -37,6 +42,14 @@ export default async function OrganizationDetailPage({
           createdAt: true,
         },
       },
+    },
+  });
+  const users = await db.user.findMany({
+    orderBy: { name: "asc" },
+    select: {
+      id: true,
+      name: true,
+      email: true,
     },
   });
 
@@ -63,6 +76,9 @@ export default async function OrganizationDetailPage({
 
       <section className="space-y-3">
         <h2 className="text-xl font-semibold">Members</h2>
+        <div className="rounded-xl border border-black/[.08] p-5 dark:border-white/[.145]">
+          <AddMemberForm organizationId={organizationId} users={users} />
+        </div>
         {organization.memberships.length === 0 ? (
           <p className="text-zinc-600 dark:text-zinc-400">
             This organization has no members yet.
@@ -76,21 +92,19 @@ export default async function OrganizationDetailPage({
                   <th className="px-4 py-3 font-medium">Email</th>
                   <th className="px-4 py-3 font-medium">Role</th>
                   <th className="px-4 py-3 font-medium">Joined</th>
+                  <th className="px-4 py-3 font-medium">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {organization.memberships.map((membership) => (
-                  <tr
-                    className="border-b border-black/[.08] last:border-0 dark:border-white/[.145]"
+                  <MembershipRow
                     key={`${membership.user.email}-${membership.createdAt.toISOString()}`}
-                  >
-                    <td className="px-4 py-3">{membership.user.name}</td>
-                    <td className="px-4 py-3">{membership.user.email}</td>
-                    <td className="px-4 py-3">{membership.role}</td>
-                    <td className="px-4 py-3">
-                      {membership.createdAt.toLocaleDateString()}
-                    </td>
-                  </tr>
+                    membership={{
+                      ...membership,
+                      createdAt: membership.createdAt.toISOString(),
+                    }}
+                    organizationId={organizationId}
+                  />
                 ))}
               </tbody>
             </table>

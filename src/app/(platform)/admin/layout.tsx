@@ -32,6 +32,9 @@ export default async function AdminLayout({
             <Link className="hover:underline" href="/admin/organizations">
               Organizations
             </Link>
+            <Link className="hover:underline" href="/admin/users">
+              Users
+            </Link>
             <a className="hover:underline" href="/admin/crm-instances">
               CRM Instances
             </a>
