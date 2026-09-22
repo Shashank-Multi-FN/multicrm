@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { redirect } from "next/navigation";
+import Link from "next/link";
 import { redirectAuthenticatedUser } from "@/lib/auth/actions";
 import { requirePlatformAdmin } from "@/lib/auth/authorization";
 import { AuthorizationError } from "@/lib/auth/errors";
@@ -28,9 +29,9 @@ export default async function AdminLayout({
             MultiCRM Admin
           </a>
           <nav aria-label="Admin navigation" className="flex gap-4 text-sm">
-            <a className="hover:underline" href="/admin/organizations">
+            <Link className="hover:underline" href="/admin/organizations">
               Organizations
-            </a>
+            </Link>
             <a className="hover:underline" href="/admin/crm-instances">
               CRM Instances
             </a>
