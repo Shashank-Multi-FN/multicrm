@@ -62,6 +62,7 @@ model CrmInstance {
   updatedAt      DateTime     @updatedAt
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   companies      Company[]
+  contacts       Contact[]
 
   @@unique([organizationId, slug])
   @@index([organizationId])
@@ -79,9 +80,30 @@ model Company {
   createdAt     DateTime    @default(now())
   updatedAt     DateTime    @updatedAt
   crmInstance   CrmInstance @relation(fields: [crmInstanceId], references: [id], onDelete: Cascade)
+  contacts      Contact[]
 
   @@index([crmInstanceId])
   @@index([crmInstanceId, name])
+}
+
+model Contact {
+  id            String      @id @default(cuid())
+  crmInstanceId String
+  companyId     String?
+  firstName     String
+  lastName      String
+  email         String?
+  phone         String?
+  jobTitle      String?
+  status        String?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  crmInstance   CrmInstance @relation(fields: [crmInstanceId], references: [id], onDelete: Cascade)
+  company       Company?    @relation(fields: [companyId], references: [id], onDelete: SetNull)
+
+  @@index([crmInstanceId])
+  @@index([companyId])
+  @@index([crmInstanceId, lastName])
 }
 
 model Session {
