@@ -61,9 +61,27 @@ model CrmInstance {
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  companies      Company[]
 
   @@unique([organizationId, slug])
   @@index([organizationId])
+}
+
+model Company {
+  id            String      @id @default(cuid())
+  crmInstanceId String
+  name          String
+  email         String?
+  phone         String?
+  website       String?
+  industry      String?
+  status        String?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  crmInstance   CrmInstance @relation(fields: [crmInstanceId], references: [id], onDelete: Cascade)
+
+  @@index([crmInstanceId])
+  @@index([crmInstanceId, name])
 }
 
 model Session {
