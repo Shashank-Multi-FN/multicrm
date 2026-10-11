@@ -4,10 +4,23 @@ import { revalidatePath } from "next/cache";
 import { getCrmTenantContext } from "@/lib/crm/context";
 import { AuthorizationError } from "@/lib/auth/errors";
 import { db } from "@/lib/db";
+import { CRM_PERMISSIONS } from "@/lib/crm/permissions";
+import {
+  buildCustomFieldPayloadForModule,
+  normalizeCustomFieldInputValue,
+  resolveCustomFieldValuesForModule,
+} from "@/lib/crm/custom-field-values";
+import { getCrmOperationalForm } from "@/lib/crm/runtime-forms";
+import {
+  captureWorkflowRecordSnapshotSafely,
+  createWorkflowObservationId,
+  observeWorkflowEvent,
+} from "@/lib/crm/workflows";
 
 export type ContactFormState = {
   error?: string;
   success?: string;
+  customFieldErrors?: Record<string, string>;
 };
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -91,7 +104,7 @@ export async function createContact(
   formData: FormData,
 ): Promise<ContactFormState> {
   try {
-    const tenant = await getCrmTenantContext();
+    const tenant = await getCrmTenantContext(CRM_PERMISSIONS.CONTACTS_CREATE);
     const fields = validateContactFields(formData);
 
     if ("error" in fields) {
@@ -102,17 +115,113 @@ export async function createContact(
       return { error: "Selected company could not be found." };
     }
 
-    await db.contact.create({
-      data: {
-        crmInstanceId: tenant.crmId,
-        ...fields.data,
-      },
+    const conditionalForm = await getCrmOperationalForm({
+      tenant,
+      moduleKey: "contacts",
+      operation: "create",
+    });
+    const customFields = await resolveCustomFieldValuesForModule({
+      tenant,
+      moduleKey: "contacts",
+      formData,
+      conditionalForm,
+      systemValues: fields.data,
+    });
+    if (!customFields.valid) {
+      return {
+        error: "Please correct the highlighted custom fields.",
+        customFieldErrors: customFields.errors,
+      };
+    }
+
+    const contact = await db.$transaction(async (tx) => {
+      const created = await tx.contact.create({
+        data: {
+          crmInstanceId: tenant.crmId,
+          ...fields.data,
+        },
+      });
+
+      for (const field of customFields.fields) {
+        const value = normalizeCustomFieldInputValue(customFields.values[field.key]);
+        const payload = buildCustomFieldPayloadForModule({
+          moduleKey: "contacts",
+          field: {
+            id: field.id,
+            key: field.key,
+            fieldType: field.fieldType,
+            options: field.options.map((option) => ({
+              id: option.id,
+              key: option.key,
+            })),
+          },
+          value,
+          recordId: created.id,
+          crmInstanceId: tenant.crmId,
+        });
+
+        if (payload === null) {
+          const existing = await tx.customContactFieldValue.findUnique({
+            where: {
+              crmInstanceId_moduleKey_recordId_fieldId: {
+                crmInstanceId: tenant.crmId,
+                moduleKey: "contacts",
+                recordId: created.id,
+                fieldId: field.id,
+              },
+            },
+          });
+          if (existing) {
+            await tx.customContactFieldValue.delete({
+              where: { id: existing.id },
+            });
+          }
+          continue;
+        }
+
+        await tx.customContactFieldValue.upsert({
+          where: {
+            crmInstanceId_moduleKey_recordId_fieldId: {
+              crmInstanceId: tenant.crmId,
+              moduleKey: "contacts",
+              recordId: created.id,
+              fieldId: field.id,
+            },
+          },
+          create: payload,
+          update: payload,
+        });
+      }
+
+      return created;
+    });
+
+    const workflowAfter = await captureWorkflowRecordSnapshotSafely({
+      tenant,
+      moduleKey: "contacts",
+      recordId: contact.id,
+    });
+    const workflowEventId = createWorkflowObservationId({
+      moduleKey: "contacts",
+      recordId: contact.id,
+      eventType: "RECORD_CREATED",
+      snapshot: workflowAfter,
+    });
+    await observeWorkflowEvent({
+      tenant,
+      moduleKey: "contacts",
+      eventType: "RECORD_CREATED",
+      recordId: contact.id,
+      eventId: workflowEventId,
+      before: null,
+      after: workflowAfter,
     });
 
     revalidatePath("/crm/contacts");
     if (fields.data.companyId) {
       revalidatePath(`/crm/companies/${fields.data.companyId}`);
     }
+    revalidatePath(`/crm/contacts/${contact.id}`);
     return { success: "Contact created successfully." };
   } catch (error) {
     if (error instanceof AuthorizationError) {
@@ -128,7 +237,7 @@ export async function updateContact(
   formData: FormData,
 ): Promise<ContactFormState> {
   try {
-    const tenant = await getCrmTenantContext();
+    const tenant = await getCrmTenantContext(CRM_PERMISSIONS.CONTACTS_UPDATE);
     const contactId = String(formData.get("contactId") ?? "").trim();
     const fields = validateContactFields(formData);
 
@@ -158,9 +267,114 @@ export async function updateContact(
       return { error: "Selected company could not be found." };
     }
 
-    await db.contact.update({
-      where: { id: contactId },
-      data: fields.data,
+    const conditionalForm = await getCrmOperationalForm({
+      tenant,
+      moduleKey: "contacts",
+      operation: "edit",
+    });
+    const customFields = await resolveCustomFieldValuesForModule({
+      tenant,
+      moduleKey: "contacts",
+      formData,
+      conditionalForm,
+      systemValues: fields.data,
+    });
+    if (!customFields.valid) {
+      return {
+        error: "Please correct the highlighted custom fields.",
+        customFieldErrors: customFields.errors,
+      };
+    }
+
+    const workflowBefore = await captureWorkflowRecordSnapshotSafely({
+      tenant,
+      moduleKey: "contacts",
+      recordId: contactId,
+    });
+    await db.$transaction(async (tx) => {
+      const updateResult = await tx.contact.updateMany({
+        where: {
+          id: contactId,
+          crmInstanceId: tenant.crmId,
+        },
+        data: fields.data,
+      });
+
+      if (updateResult.count !== 1) {
+        throw new Error("Contact could not be found.");
+      }
+
+      for (const field of customFields.fields) {
+        const value = normalizeCustomFieldInputValue(customFields.values[field.key]);
+        const payload = buildCustomFieldPayloadForModule({
+          moduleKey: "contacts",
+          field: {
+            id: field.id,
+            key: field.key,
+            fieldType: field.fieldType,
+            options: field.options.map((option) => ({
+              id: option.id,
+              key: option.key,
+            })),
+          },
+          value,
+          recordId: contactId,
+          crmInstanceId: tenant.crmId,
+        });
+
+        if (payload === null) {
+          const existing = await tx.customContactFieldValue.findUnique({
+            where: {
+              crmInstanceId_moduleKey_recordId_fieldId: {
+                crmInstanceId: tenant.crmId,
+                moduleKey: "contacts",
+                recordId: contactId,
+                fieldId: field.id,
+              },
+            },
+          });
+          if (existing) {
+            await tx.customContactFieldValue.delete({
+              where: { id: existing.id },
+            });
+          }
+          continue;
+        }
+
+        await tx.customContactFieldValue.upsert({
+          where: {
+            crmInstanceId_moduleKey_recordId_fieldId: {
+              crmInstanceId: tenant.crmId,
+              moduleKey: "contacts",
+              recordId: contactId,
+              fieldId: field.id,
+            },
+          },
+          create: payload,
+          update: payload,
+        });
+      }
+    });
+
+    const workflowAfter = await captureWorkflowRecordSnapshotSafely({
+      tenant,
+      moduleKey: "contacts",
+      recordId: contactId,
+    });
+    const workflowEventId = createWorkflowObservationId({
+      moduleKey: "contacts",
+      recordId: contactId,
+      eventType: "RECORD_UPDATED",
+      snapshot: workflowAfter,
+    });
+    await observeWorkflowEvent({
+      tenant,
+      moduleKey: "contacts",
+      eventType: "RECORD_UPDATED",
+      recordId: contactId,
+      eventId: workflowEventId,
+      before: workflowBefore,
+      after: workflowAfter,
     });
 
     revalidatePath("/crm/contacts");
@@ -175,6 +389,9 @@ export async function updateContact(
     if (error instanceof AuthorizationError) {
       return { error: "You are not authorized to update contacts." };
     }
+    if (error instanceof Error && error.message === "Contact could not be found.") {
+      return { error: "Contact could not be found." };
+    }
 
     return genericDatabaseError("update", error);
   }
@@ -185,7 +402,7 @@ export async function deleteContact(
   formData: FormData,
 ): Promise<ContactFormState> {
   try {
-    const tenant = await getCrmTenantContext();
+    const tenant = await getCrmTenantContext(CRM_PERMISSIONS.CONTACTS_DELETE);
     const contactId = String(formData.get("contactId") ?? "").trim();
 
     if (!contactId) {
@@ -206,8 +423,29 @@ export async function deleteContact(
       return { error: "Contact could not be found." };
     }
 
+    const workflowBefore = await captureWorkflowRecordSnapshotSafely({
+      tenant,
+      moduleKey: "contacts",
+      recordId: contactId,
+    });
+    const workflowEventId = createWorkflowObservationId({
+      moduleKey: "contacts",
+      recordId: contactId,
+      eventType: "RECORD_DELETED",
+      snapshot: workflowBefore,
+    });
     await db.contact.delete({
       where: { id: contactId },
+    });
+
+    await observeWorkflowEvent({
+      tenant,
+      moduleKey: "contacts",
+      eventType: "RECORD_DELETED",
+      recordId: contactId,
+      eventId: workflowEventId,
+      before: workflowBefore,
+      after: null,
     });
 
     revalidatePath("/crm/contacts");

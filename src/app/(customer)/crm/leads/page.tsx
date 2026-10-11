@@ -1,7 +1,10 @@
 import Link from "next/link";
 
 import { db } from "@/lib/db";
+import { getCustomFieldDefinitionsForModule } from "@/lib/crm/custom-field-values";
 import { getCrmTenantContext } from "@/lib/crm/context";
+import { CRM_PERMISSIONS } from "@/lib/crm/permissions";
+import { getCrmOperationalForm } from "@/lib/crm/runtime-forms";
 
 import LeadForm from "./lead-form";
 
@@ -15,76 +18,87 @@ export default async function LeadsPage({
 }: {
   searchParams: SearchParams;
 }) {
-  const { crmId } = await getCrmTenantContext();
+  const tenant = await getCrmTenantContext(CRM_PERMISSIONS.LEADS_READ);
+  const { crmId } = tenant;
   const params = await searchParams;
 
   const query = params.q?.trim() ?? "";
   const status = params.status?.trim() ?? "";
 
-  const leads = await db.lead.findMany({
-    where: {
-      crmInstanceId: crmId,
-      ...(query
-        ? {
-            OR: [
-              {
-                firstName: {
-                  contains: query,
-                  mode: "insensitive",
+  const [leads, companies, customFields, conditionalForm] = await Promise.all([
+    db.lead.findMany({
+      where: {
+        crmInstanceId: crmId,
+        ...(query
+          ? {
+              OR: [
+                {
+                  firstName: {
+                    contains: query,
+                    mode: "insensitive",
+                  },
                 },
-              },
-              {
-                lastName: {
-                  contains: query,
-                  mode: "insensitive",
+                {
+                  lastName: {
+                    contains: query,
+                    mode: "insensitive",
+                  },
                 },
-              },
-              {
-                email: {
-                  contains: query,
-                  mode: "insensitive",
+                {
+                  email: {
+                    contains: query,
+                    mode: "insensitive",
+                  },
                 },
-              },
-              {
-                phone: {
-                  contains: query,
-                  mode: "insensitive",
+                {
+                  phone: {
+                    contains: query,
+                    mode: "insensitive",
+                  },
                 },
-              },
-            ],
-          }
-        : {}),
-      ...(status
-        ? {
-            status,
-          }
-        : {}),
-    },
-    include: {
-      company: {
-        select: {
-          id: true,
-          name: true,
+              ],
+            }
+          : {}),
+        ...(status
+          ? {
+              status,
+            }
+          : {}),
+      },
+      include: {
+        company: {
+          select: {
+            id: true,
+            name: true,
+          },
         },
       },
-    },
-    orderBy: {
-      createdAt: "desc",
-    },
-  });
-
-  const companies = await db.company.findMany({
-    where: {
+      orderBy: {
+        createdAt: "desc",
+      },
+    }),
+    db.company.findMany({
+      where: {
+        crmInstanceId: crmId,
+      },
+      select: {
+        id: true,
+        name: true,
+      },
+      orderBy: {
+        name: "asc",
+      },
+    }),
+    getCustomFieldDefinitionsForModule({
+      moduleKey: "leads",
       crmInstanceId: crmId,
-    },
-    select: {
-      id: true,
-      name: true,
-    },
-    orderBy: {
-      name: "asc",
-    },
-  });
+    }),
+    getCrmOperationalForm({
+      tenant,
+      moduleKey: "leads",
+      operation: "create",
+    }),
+  ]);
 
   return (
     <div className="space-y-8">
@@ -98,7 +112,11 @@ export default async function LeadsPage({
       <section className="rounded-lg border p-6">
         <h2 className="mb-4 text-lg font-semibold">Create lead</h2>
 
-        <LeadForm companies={companies} />
+        <LeadForm
+          companies={companies}
+          conditionalForm={conditionalForm}
+          customFields={customFields}
+        />
       </section>
 
       <section className="space-y-4">

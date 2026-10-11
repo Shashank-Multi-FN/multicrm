@@ -1,8 +1,9 @@
 import Link from "next/link";
 import { getCrmTenantContext } from "@/lib/crm/context";
+import { CRM_PERMISSIONS } from "@/lib/crm/permissions";
 
 export default async function CrmPage() {
-  const tenant = await getCrmTenantContext();
+  const tenant = await getCrmTenantContext(CRM_PERMISSIONS.DASHBOARD_READ);
 
   return (
     <div className="space-y-8">

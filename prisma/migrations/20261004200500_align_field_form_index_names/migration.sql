@@ -1,0 +1,5 @@
+ALTER INDEX "CrmFieldDefinition_crmInstanceId_moduleKey_enabled_displayOrder"
+    RENAME TO "CrmFieldDefinition_crmInstanceId_moduleKey_enabled_displayO_idx";
+
+ALTER INDEX "CrmFieldOption_crmInstanceId_moduleKey_fieldId_enabled_sortOrde"
+    RENAME TO "CrmFieldOption_crmInstanceId_moduleKey_fieldId_enabled_sort_idx";

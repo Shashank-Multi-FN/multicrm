@@ -140,7 +140,15 @@ export async function removeOrganizationMember(
       return { error: "Membership not found." };
     }
 
-    await db.membership.delete({ where: { id: membershipId } });
+    await db.$transaction([
+      db.crmMembership.deleteMany({
+        where: {
+          userId: membership.userId,
+          crmInstance: { organizationId },
+        },
+      }),
+      db.membership.delete({ where: { id: membershipId } }),
+    ]);
     revalidatePath(`/admin/organizations/${organizationId}`);
     revalidatePath(`/admin/users/${membership.userId}`);
     return { success: "Member removed successfully." };

@@ -1,10 +1,16 @@
 "use server";
 
-import { Prisma } from "@prisma/client/index";
+import { MembershipRole, Prisma } from "@prisma/client/index";
 import { revalidatePath } from "next/cache";
 import { requirePlatformAdmin } from "@/lib/auth/authorization";
 import { AuthorizationError } from "@/lib/auth/errors";
 import { db } from "@/lib/db";
+import {
+  getDefaultCrmModuleConfigurations,
+  getDefaultCrmNavigationItems,
+} from "@/lib/crm/navigation";
+import { provisionDefaultCrmFieldsAndForms } from "@/lib/crm/fields";
+import { crmRoleForOrganizationRole } from "@/lib/crm/roles";
 
 export type CrmInstanceFormState = {
   error?: string;
@@ -53,19 +59,62 @@ export async function createCrmInstance(
 
     const organization = await db.organization.findUnique({
       where: { id: organizationId },
-      select: { id: true },
+      select: {
+        id: true,
+        memberships: {
+          where: {
+            role: {
+              in: [MembershipRole.ORG_OWNER, MembershipRole.ORG_ADMIN],
+            },
+          },
+          select: { userId: true, role: true },
+        },
+      },
     });
 
     if (!organization) {
       return { error: "Organization not found." };
     }
+    if (organization.memberships.length === 0) {
+      return {
+        error:
+          "Assign an organization owner or admin before creating a CRM instance.",
+      };
+    }
 
-    await db.crmInstance.create({
-      data: {
-        organizationId: organization.id,
-        name,
-        slug,
-      },
+    await db.$transaction(async (transaction) => {
+      const crmInstance = await transaction.crmInstance.create({
+        data: {
+          organizationId: organization.id,
+          name,
+          slug,
+        },
+        select: { id: true },
+      });
+
+      await transaction.crmModuleConfiguration.createMany({
+        data: getDefaultCrmModuleConfigurations().map((module) => ({
+          ...module,
+          crmInstanceId: crmInstance.id,
+        })),
+      });
+
+      await transaction.crmNavigationItem.createMany({
+        data: getDefaultCrmNavigationItems().map((item) => ({
+          ...item,
+          crmInstanceId: crmInstance.id,
+        })),
+      });
+
+      await provisionDefaultCrmFieldsAndForms(transaction, crmInstance.id);
+
+      await transaction.crmMembership.createMany({
+        data: organization.memberships.map((membership) => ({
+          userId: membership.userId,
+          crmInstanceId: crmInstance.id,
+          role: crmRoleForOrganizationRole(membership.role),
+        })),
+      });
     });
 
     revalidatePath("/admin/crm-instances");

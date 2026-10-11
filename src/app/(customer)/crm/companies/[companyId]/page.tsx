@@ -2,15 +2,18 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getCrmTenantContext } from "@/lib/crm/context";
 import { db } from "@/lib/db";
+import { CRM_PERMISSIONS } from "@/lib/crm/permissions";
 import CompanyForm from "../company-form";
 import DeleteCompanyForm from "../delete-company-form";
+import { getCustomFieldValues } from "@/lib/crm/custom-field-values";
+import { getCrmOperationalForm } from "@/lib/crm/runtime-forms";
 
 export default async function CompanyDetailPage({
   params,
 }: {
   params: Promise<{ companyId: string }>;
 }) {
-  const tenant = await getCrmTenantContext();
+  const tenant = await getCrmTenantContext(CRM_PERMISSIONS.COMPANIES_READ);
   const { companyId } = await params;
   const company = await db.company.findFirst({
     where: {
@@ -39,6 +42,18 @@ export default async function CompanyDetailPage({
     notFound();
   }
 
+  const [customFields, conditionalForm] = await Promise.all([
+    getCustomFieldValues({
+      moduleKey: "companies",
+      recordId: company.id,
+    }),
+    getCrmOperationalForm({
+      tenant,
+      moduleKey: "companies",
+      operation: "edit",
+    }),
+  ]);
+
   return (
     <div className="space-y-8">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
@@ -55,7 +70,29 @@ export default async function CompanyDetailPage({
       </div>
 
       <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(20rem,0.8fr)]">
-        <CompanyForm company={company} />
+        <div className="space-y-6">
+          <CompanyForm
+            company={company}
+            conditionalForm={conditionalForm}
+            customFields={customFields}
+          />
+
+          {customFields.length > 0 ? (
+            <section className="rounded-xl border border-black/[.08] p-6 dark:border-white/[.145]">
+              <h2 className="mb-4 text-lg font-semibold">Custom Fields</h2>
+              <dl className="space-y-3">
+                {customFields.map((field) => (
+                  <div key={field.id} className="rounded-lg border border-black/[.08] p-3 dark:border-white/[.145]">
+                    <dt className="text-sm font-medium text-zinc-600 dark:text-zinc-400">{field.label}</dt>
+                    <dd className="mt-1 text-sm text-zinc-900 dark:text-zinc-100">
+                      {field.displayValue ?? "—"}
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+            </section>
+          ) : null}
+        </div>
 
         <dl className="h-fit space-y-4 rounded-xl border border-black/[.08] p-6 text-sm dark:border-white/[.145]">
           <div>

@@ -2,6 +2,11 @@ import Link from "next/link";
 import Form from "next/form";
 import { getCrmTenantContext } from "@/lib/crm/context";
 import { db } from "@/lib/db";
+import { CRM_PERMISSIONS } from "@/lib/crm/permissions";
+import {
+  getCustomFieldDefinitionsForModule,
+} from "@/lib/crm/custom-field-values";
+import { getCrmOperationalForm } from "@/lib/crm/runtime-forms";
 import CompanyForm from "./company-form";
 
 export default async function CompaniesPage({
@@ -9,34 +14,45 @@ export default async function CompaniesPage({
 }: {
   searchParams: Promise<{ q?: string; status?: string }>;
 }) {
-  const tenant = await getCrmTenantContext();
+  const tenant = await getCrmTenantContext(CRM_PERMISSIONS.COMPANIES_READ);
   const params = await searchParams;
   const query = (params.q ?? "").trim();
   const status = (params.status ?? "").trim();
-  const companies = await db.company.findMany({
-    where: {
+  const [companies, customFields, conditionalForm] = await Promise.all([
+    db.company.findMany({
+      where: {
+        crmInstanceId: tenant.crmId,
+        ...(query
+          ? {
+              OR: [
+                { name: { contains: query, mode: "insensitive" } },
+                { email: { contains: query, mode: "insensitive" } },
+                { phone: { contains: query, mode: "insensitive" } },
+              ],
+            }
+          : {}),
+        ...(status ? { status: { equals: status, mode: "insensitive" } } : {}),
+      },
+      orderBy: { name: "asc" },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        phone: true,
+        industry: true,
+        status: true,
+      },
+    }),
+    getCustomFieldDefinitionsForModule({
+      moduleKey: "companies",
       crmInstanceId: tenant.crmId,
-      ...(query
-        ? {
-            OR: [
-              { name: { contains: query, mode: "insensitive" } },
-              { email: { contains: query, mode: "insensitive" } },
-              { phone: { contains: query, mode: "insensitive" } },
-            ],
-          }
-        : {}),
-      ...(status ? { status: { equals: status, mode: "insensitive" } } : {}),
-    },
-    orderBy: { name: "asc" },
-    select: {
-      id: true,
-      name: true,
-      email: true,
-      phone: true,
-      industry: true,
-      status: true,
-    },
-  });
+    }),
+    getCrmOperationalForm({
+      tenant,
+      moduleKey: "companies",
+      operation: "create",
+    }),
+  ]);
 
   return (
     <div className="space-y-8">
@@ -112,7 +128,10 @@ export default async function CompaniesPage({
           )}
         </section>
 
-        <CompanyForm />
+        <CompanyForm
+          conditionalForm={conditionalForm}
+          customFields={customFields}
+        />
       </div>
     </div>
   );

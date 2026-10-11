@@ -17,16 +17,78 @@ enum PlatformRole {
   PLATFORM_ADMIN
 }
 
+enum CrmRole {
+  CRM_OWNER
+  CRM_ADMIN
+  CRM_MEMBER
+}
+
+enum CrmFieldType {
+  TEXT
+  TEXTAREA
+  NUMBER
+  EMAIL
+  PHONE
+  DATE
+  DATETIME
+  BOOLEAN
+  SELECT
+}
+
+enum CrmFieldOrigin {
+  SYSTEM
+  CUSTOM
+}
+
+enum CrmConditionalOperator {
+  EQUALS
+  NOT_EQUALS
+  IS_EMPTY
+  IS_NOT_EMPTY
+}
+
+enum CrmConditionalAction {
+  SHOW
+  HIDE
+  REQUIRE
+  OPTIONAL
+  ENABLE
+  DISABLE
+}
+
+enum CrmWorkflowEvent {
+  RECORD_CREATED
+  RECORD_UPDATED
+  RECORD_DELETED
+}
+
+enum CrmWorkflowRunStatus {
+  MATCHED
+  NOT_MATCHED
+  EVALUATION_FAILED
+}
+
+enum CrmWorkflowActionType {
+  CREATE_TASK
+}
+
+enum CrmWorkflowActionRunStatus {
+  SUCCEEDED
+  FAILED
+}
+
 model User {
-  id           String       @id @default(cuid())
-  email        String       @unique
-  name         String
-  passwordHash String
-  platformRole PlatformRole @default(NONE)
-  createdAt    DateTime     @default(now())
-  updatedAt    DateTime     @updatedAt
-  memberships  Membership[]
-  sessions     Session[]
+  id                     String                    @id @default(cuid())
+  email                  String                    @unique
+  name                   String
+  passwordHash           String
+  platformRole           PlatformRole              @default(NONE)
+  createdAt              DateTime                  @default(now())
+  updatedAt              DateTime                  @updatedAt
+  memberships            Membership[]
+  crmMemberships         CrmMembership[]
+  sessions               Session[]
+  configurationAuditLogs CrmConfigurationAuditLog[]
 }
 
 model Organization {
@@ -54,80 +116,521 @@ model Membership {
 }
 
 model CrmInstance {
-  id             String       @id @default(cuid())
-  organizationId String
-  name           String
-  slug           String
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  companies      Company[]
-  contacts       Contact[]
-  leads          Lead[]
+  id                      String                   @id @default(cuid())
+  organizationId          String
+  name                    String
+  slug                    String
+  createdAt               DateTime                 @default(now())
+  updatedAt               DateTime                 @updatedAt
+  organization            Organization             @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  companies               Company[]
+  contacts                Contact[]
+  leads                   Lead[]
+  tasks                   Task[]
+  crmMemberships          CrmMembership[]
+  moduleConfigurations    CrmModuleConfiguration[]
+  configurationAuditLogs  CrmConfigurationAuditLog[]
+  workflows               CrmWorkflow[]
+  workflowRuns            CrmWorkflowRun[]
+  workflowActionRuns      CrmWorkflowActionRun[]
 
   @@unique([organizationId, slug])
   @@index([organizationId])
 }
 
-model Company {
+model CrmMembership {
   id            String      @id @default(cuid())
+  userId        String
   crmInstanceId String
-  name          String
-  email         String?
-  phone         String?
-  website       String?
-  industry      String?
-  status        String?
+  role          CrmRole
   createdAt     DateTime    @default(now())
   updatedAt     DateTime    @updatedAt
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
   crmInstance   CrmInstance @relation(fields: [crmInstanceId], references: [id], onDelete: Cascade)
-  contacts      Contact[]
-  leads         Lead[]
 
+  @@unique([userId, crmInstanceId])
+  @@index([userId])
+  @@index([crmInstanceId])
+}
+
+model CrmModuleConfiguration {
+  id               String               @id @default(cuid())
+  crmInstanceId    String
+  moduleKey        String
+  label            String
+  routePath        String
+  enabled          Boolean              @default(true)
+  sortOrder        Int
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
+  crmInstance      CrmInstance          @relation(fields: [crmInstanceId], references: [id], onDelete: Cascade)
+  navigationItem   CrmNavigationItem?
+  fieldDefinitions CrmFieldDefinition[]
+  forms            CrmForm[]
+  workflows        CrmWorkflow[]
+
+  @@unique([crmInstanceId, moduleKey])
+  @@index([crmInstanceId, enabled, sortOrder])
+}
+
+model CrmNavigationItem {
+  id                  String                 @id @default(cuid())
+  crmInstanceId       String
+  moduleKey           String
+  label               String
+  enabled             Boolean                @default(true)
+  sortOrder           Int
+  createdAt           DateTime               @default(now())
+  updatedAt           DateTime               @updatedAt
+  moduleConfiguration CrmModuleConfiguration @relation(fields: [crmInstanceId, moduleKey], references: [crmInstanceId, moduleKey], onDelete: Cascade)
+
+  @@unique([crmInstanceId, moduleKey])
+  @@index([crmInstanceId, sortOrder])
+}
+
+model CrmFieldDefinition {
+  id                  String                    @id @default(cuid())
+  crmInstanceId       String
+  moduleKey           String
+  key                 String
+  label               String
+  fieldType           CrmFieldType
+  origin              CrmFieldOrigin            @default(CUSTOM)
+  backingColumn       String?
+  required            Boolean                   @default(false)
+  enabled             Boolean                   @default(true)
+  displayOrder        Int
+  minLength           Int?
+  maxLength           Int?
+  minValue            Float?
+  maxValue            Float?
+  pattern             String?
+  createdAt           DateTime                  @default(now())
+  updatedAt           DateTime                  @updatedAt
+  moduleConfiguration CrmModuleConfiguration    @relation(fields: [crmInstanceId, moduleKey], references: [crmInstanceId, moduleKey], onDelete: Cascade)
+  options             CrmFieldOption[]
+  formFields          CrmFormField[]
+  sourceRules         CrmConditionalRule[]    @relation("ConditionalRuleSourceField")
+  targetRules         CrmConditionalRule[]    @relation("ConditionalRuleTargetField")
+  workflowConditions  CrmWorkflowCondition[]
+  companyValues       CustomCompanyFieldValue[] @relation("CompanyValueField")
+  contactValues       CustomContactFieldValue[] @relation("ContactValueField")
+  leadValues          CustomLeadFieldValue[]    @relation("LeadValueField")
+  taskValues          CustomTaskFieldValue[]    @relation("TaskValueField")
+
+  @@unique([crmInstanceId, moduleKey, key])
+  @@unique([crmInstanceId, moduleKey, id])
+  @@unique([crmInstanceId, moduleKey, id, fieldType, origin])
+  @@index([crmInstanceId, moduleKey, enabled, displayOrder])
+}
+
+model CrmFieldOption {
+  id            String                    @id @default(cuid())
+  crmInstanceId String
+  moduleKey     String
+  fieldId       String
+  key           String
+  label         String
+  enabled       Boolean                   @default(true)
+  sortOrder     Int
+  createdAt     DateTime                  @default(now())
+  updatedAt     DateTime                  @updatedAt
+  field         CrmFieldDefinition        @relation(fields: [crmInstanceId, moduleKey, fieldId], references: [crmInstanceId, moduleKey, id], onDelete: Cascade)
+  companyValues CustomCompanyFieldValue[] @relation("CompanyValueOption")
+  contactValues CustomContactFieldValue[] @relation("ContactValueOption")
+  leadValues    CustomLeadFieldValue[]    @relation("LeadValueOption")
+  taskValues    CustomTaskFieldValue[]    @relation("TaskValueOption")
+
+  @@unique([fieldId, key])
+  @@unique([crmInstanceId, moduleKey, fieldId, id])
+  @@index([crmInstanceId, moduleKey, fieldId, enabled, sortOrder])
+}
+
+model CrmForm {
+  id                  String                 @id @default(cuid())
+  crmInstanceId       String
+  moduleKey           String
+  key                 String
+  name                String
+  description         String?
+  enabled             Boolean                @default(true)
+  createdAt           DateTime               @default(now())
+  updatedAt           DateTime               @updatedAt
+  moduleConfiguration CrmModuleConfiguration @relation(fields: [crmInstanceId, moduleKey], references: [crmInstanceId, moduleKey], onDelete: Cascade)
+  formFields          CrmFormField[]
+  conditionalRules    CrmConditionalRule[]
+
+  @@unique([crmInstanceId, moduleKey, key])
+  @@unique([crmInstanceId, moduleKey, id])
+  @@index([crmInstanceId, moduleKey, enabled])
+}
+
+model CrmFormField {
+  id               String             @id @default(cuid())
+  crmInstanceId    String
+  moduleKey        String
+  formId           String
+  fieldId          String
+  displayOrder     Int
+  requiredOverride Boolean?
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+  form             CrmForm            @relation(fields: [crmInstanceId, moduleKey, formId], references: [crmInstanceId, moduleKey, id], onDelete: Cascade)
+  field            CrmFieldDefinition @relation(fields: [crmInstanceId, moduleKey, fieldId], references: [crmInstanceId, moduleKey, id], onDelete: Cascade)
+
+  @@unique([formId, fieldId])
+  @@index([crmInstanceId, moduleKey, formId, displayOrder])
+}
+
+model CrmConditionalRule {
+  id               String                 @id @default(cuid())
+  crmInstanceId    String
+  moduleKey        String
+  formId           String
+  sourceFieldId    String
+  targetFieldId    String
+  operator         CrmConditionalOperator
+  comparisonValue  String?
+  action           CrmConditionalAction
+  enabled          Boolean                @default(true)
+  sortOrder        Int                    @default(0)
+  createdAt        DateTime               @default(now())
+  updatedAt        DateTime               @updatedAt
+  form             CrmForm                @relation(fields: [crmInstanceId, moduleKey, formId], references: [crmInstanceId, moduleKey, id], onDelete: Cascade)
+  sourceField      CrmFieldDefinition     @relation("ConditionalRuleSourceField", fields: [crmInstanceId, moduleKey, sourceFieldId], references: [crmInstanceId, moduleKey, id], onDelete: Restrict)
+  targetField      CrmFieldDefinition     @relation("ConditionalRuleTargetField", fields: [crmInstanceId, moduleKey, targetFieldId], references: [crmInstanceId, moduleKey, id], onDelete: Restrict)
+
+  @@index([crmInstanceId, moduleKey, formId, enabled, sortOrder])
+  @@index([crmInstanceId, moduleKey, sourceFieldId])
+  @@index([crmInstanceId, moduleKey, targetFieldId])
+}
+
+model CrmWorkflow {
+  id                  String               @id @default(cuid())
+  crmInstanceId       String
+  moduleKey           String
+  name                String
+  description         String?
+  triggerEvent        CrmWorkflowEvent
+  enabled             Boolean              @default(true)
+  displayOrder        Int                  @default(0)
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+  crmInstance         CrmInstance          @relation(fields: [crmInstanceId], references: [id], onDelete: Cascade)
+  moduleConfiguration CrmModuleConfiguration @relation(fields: [crmInstanceId, moduleKey], references: [crmInstanceId, moduleKey], onDelete: Cascade)
+  conditions          CrmWorkflowCondition[]
+  actions              CrmWorkflowAction[]
+  runs                CrmWorkflowRun[]
+
+  @@unique([crmInstanceId, moduleKey, id])
+  @@index([crmInstanceId, moduleKey, enabled, triggerEvent, displayOrder])
+}
+
+model CrmWorkflowCondition {
+  id              String                    @id @default(cuid())
+  crmInstanceId   String
+  moduleKey       String
+  workflowId      String
+  fieldId         String
+  operator        CrmConditionalOperator
+  comparisonValue String?
+  enabled         Boolean                   @default(true)
+  displayOrder    Int                       @default(0)
+  createdAt       DateTime                  @default(now())
+  updatedAt       DateTime                  @updatedAt
+  workflow        CrmWorkflow               @relation(fields: [crmInstanceId, moduleKey, workflowId], references: [crmInstanceId, moduleKey, id], onDelete: Cascade)
+  field           CrmFieldDefinition        @relation(fields: [crmInstanceId, moduleKey, fieldId], references: [crmInstanceId, moduleKey, id], onDelete: Restrict)
+
+  @@index([crmInstanceId, moduleKey, workflowId, enabled, displayOrder])
+  @@index([crmInstanceId, moduleKey, fieldId])
+}
+
+model CrmWorkflowRun {
+  id               String                @id @default(cuid())
+  crmInstanceId    String
+  moduleKey        String
+  workflowId       String
+  eventId          String
+  recordId         String
+  triggerEvent     CrmWorkflowEvent
+  status           CrmWorkflowRunStatus
+  evaluationError  String?               @db.VarChar(2000)
+  observedAt       DateTime              @default(now())
+  crmInstance      CrmInstance           @relation(fields: [crmInstanceId], references: [id], onDelete: Cascade)
+  workflow         CrmWorkflow           @relation(fields: [crmInstanceId, moduleKey, workflowId], references: [crmInstanceId, moduleKey, id], onDelete: Restrict)
+  actionRuns       CrmWorkflowActionRun[] @relation("ActionRunWorkflowRun")
+
+  @@unique([crmInstanceId, moduleKey, workflowId, eventId])
+  @@unique([crmInstanceId, moduleKey, workflowId, id], map: "CrmWorkflowRun_scope_id_key")
+  @@index([crmInstanceId, moduleKey, recordId, observedAt])
+  @@index([crmInstanceId, workflowId, observedAt])
+}
+
+model CrmWorkflowAction {
+  id              String                @id @default(cuid())
+  crmInstanceId   String
+  moduleKey       String
+  workflowId      String
+  actionType      CrmWorkflowActionType
+  enabled         Boolean               @default(true)
+  displayOrder    Int                   @default(0)
+  taskTitle       String?               @db.VarChar(200)
+  taskDescription String?               @db.VarChar(2000)
+  taskStatus      String?               @db.VarChar(32)
+  taskPriority    String?               @db.VarChar(16)
+  taskDueDate     DateTime?             @db.Date
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @updatedAt
+  workflow        CrmWorkflow           @relation(fields: [crmInstanceId, moduleKey, workflowId], references: [crmInstanceId, moduleKey, id], onDelete: Cascade)
+  runs            CrmWorkflowActionRun[] @relation("ActionRunWorkflowAction")
+
+  @@unique([crmInstanceId, moduleKey, workflowId, id])
+  @@index([crmInstanceId, moduleKey, workflowId, enabled, displayOrder], map: "CrmWorkflowAction_scope_enabled_order_idx")
+}
+
+model CrmWorkflowActionRun {
+  id               String                      @id @default(cuid())
+  crmInstanceId    String
+  moduleKey        String
+  workflowId       String
+  workflowRunId    String
+  workflowActionId String
+  status           CrmWorkflowActionRunStatus
+  createdTaskId    String?
+  errorMessage     String?                     @db.VarChar(2000)
+  executedAt       DateTime                    @default(now())
+  crmInstance      CrmInstance                 @relation(fields: [crmInstanceId], references: [id], onDelete: Cascade)
+  workflowRun      CrmWorkflowRun              @relation("ActionRunWorkflowRun", fields: [crmInstanceId, moduleKey, workflowId, workflowRunId], references: [crmInstanceId, moduleKey, workflowId, id], onDelete: Restrict, map: "CrmWorkflowActionRun_workflowRun_fkey")
+  workflowAction   CrmWorkflowAction           @relation("ActionRunWorkflowAction", fields: [crmInstanceId, moduleKey, workflowId, workflowActionId], references: [crmInstanceId, moduleKey, workflowId, id], onDelete: Restrict, map: "CrmWorkflowActionRun_workflowAction_fkey")
+
+  @@unique([crmInstanceId, moduleKey, workflowRunId, workflowActionId], map: "CrmWorkflowActionRun_event_action_key")
+  @@index([crmInstanceId, createdTaskId], map: "CrmWorkflowActionRun_created_task_idx")
+  @@index([crmInstanceId, workflowId, executedAt], map: "CrmWorkflowActionRun_workflow_date_idx")
+}
+
+model Company {
+  id                String                    @id @default(cuid())
+  crmInstanceId     String
+  name              String
+  email             String?
+  phone             String?
+  website           String?
+  industry          String?
+  status            String?
+  createdAt         DateTime                  @default(now())
+  updatedAt         DateTime                  @updatedAt
+  crmInstance       CrmInstance               @relation(fields: [crmInstanceId], references: [id], onDelete: Cascade)
+  contacts          Contact[]
+  leads             Lead[]
+  tasks             Task[]
+  customFieldValues CustomCompanyFieldValue[] @relation("CompanyValueRecord")
+
+  @@unique([crmInstanceId, id])
   @@index([crmInstanceId])
   @@index([crmInstanceId, name])
 }
 
 model Contact {
-  id            String      @id @default(cuid())
-  crmInstanceId String
-  companyId     String?
-  firstName     String
-  lastName      String
-  email         String?
-  phone         String?
-  jobTitle      String?
-  status        String?
-  createdAt     DateTime    @default(now())
-  updatedAt     DateTime    @updatedAt
-  crmInstance   CrmInstance @relation(fields: [crmInstanceId], references: [id], onDelete: Cascade)
-  company       Company?    @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  id                String                    @id @default(cuid())
+  crmInstanceId     String
+  companyId         String?
+  firstName         String
+  lastName          String
+  email             String?
+  phone             String?
+  jobTitle          String?
+  status            String?
+  createdAt         DateTime                  @default(now())
+  updatedAt         DateTime                  @updatedAt
+  crmInstance       CrmInstance               @relation(fields: [crmInstanceId], references: [id], onDelete: Cascade)
+  company           Company?                  @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  tasks             Task[]
+  customFieldValues CustomContactFieldValue[] @relation("ContactValueRecord")
 
+  @@unique([crmInstanceId, id])
   @@index([crmInstanceId])
   @@index([companyId])
   @@index([crmInstanceId, lastName])
 }
 
 model Lead {
-  id            String      @id @default(cuid())
-  crmInstanceId String
-  companyId     String?
-  firstName     String
-  lastName      String
-  email         String?
-  phone         String?
-  jobTitle      String?
-  source        String?
-  status        String?
-  createdAt     DateTime    @default(now())
-  updatedAt     DateTime    @updatedAt
-  crmInstance   CrmInstance @relation(fields: [crmInstanceId], references: [id], onDelete: Cascade)
-  company       Company?    @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  id                String                 @id @default(cuid())
+  crmInstanceId     String
+  companyId         String?
+  firstName         String
+  lastName          String
+  email             String?
+  phone             String?
+  jobTitle          String?
+  source            String?
+  status            String?
+  createdAt         DateTime               @default(now())
+  updatedAt         DateTime               @updatedAt
+  crmInstance       CrmInstance            @relation(fields: [crmInstanceId], references: [id], onDelete: Cascade)
+  company           Company?               @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  tasks             Task[]
+  customFieldValues CustomLeadFieldValue[] @relation("LeadValueRecord")
 
+  @@unique([crmInstanceId, id])
   @@index([crmInstanceId])
   @@index([companyId])
   @@index([crmInstanceId, lastName])
   @@index([crmInstanceId, status])
+}
+
+model Task {
+  id            String    @id @default(cuid())
+  crmInstanceId String
+  companyId     String?
+  contactId     String?
+  leadId        String?
+  title         String
+  description   String?
+  dueDate       DateTime?
+  priority      String?
+  status        String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  crmInstance       CrmInstance            @relation(fields: [crmInstanceId], references: [id], onDelete: Cascade)
+  company           Company?               @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  contact           Contact?               @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  lead              Lead?                  @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  customFieldValues CustomTaskFieldValue[] @relation("TaskValueRecord")
+
+  @@unique([crmInstanceId, id])
+  @@index([crmInstanceId])
+  @@index([companyId])
+  @@index([contactId])
+  @@index([leadId])
+  @@index([crmInstanceId, status])
+  @@index([crmInstanceId, dueDate])
+}
+
+model CustomCompanyFieldValue {
+  id                  String             @id @default(cuid())
+  crmInstanceId       String
+  moduleKey           String             @default("companies")
+  recordId            String
+  fieldId             String
+  fieldType           CrmFieldType
+  fieldOrigin         CrmFieldOrigin     @default(CUSTOM)
+  textValue           String?
+  numberValue         Float?
+  booleanValue        Boolean?
+  dateValue           DateTime?          @db.Date
+  datetimeValue       DateTime?          @db.Timestamp(3)
+  optionCrmInstanceId String?
+  optionModuleKey     String?
+  optionFieldId       String?
+  optionId            String?
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+  record              Company            @relation("CompanyValueRecord", fields: [crmInstanceId, recordId], references: [crmInstanceId, id], onDelete: Cascade)
+  field               CrmFieldDefinition @relation("CompanyValueField", fields: [crmInstanceId, moduleKey, fieldId, fieldType, fieldOrigin], references: [crmInstanceId, moduleKey, id, fieldType, origin], onDelete: Restrict)
+  option              CrmFieldOption?    @relation("CompanyValueOption", fields: [optionCrmInstanceId, optionModuleKey, optionFieldId, optionId], references: [crmInstanceId, moduleKey, fieldId, id], onDelete: Restrict)
+
+  @@unique([crmInstanceId, moduleKey, recordId, fieldId])
+  @@index([crmInstanceId, moduleKey, fieldId, recordId])
+}
+
+model CustomContactFieldValue {
+  id                  String             @id @default(cuid())
+  crmInstanceId       String
+  moduleKey           String             @default("contacts")
+  recordId            String
+  fieldId             String
+  fieldType           CrmFieldType
+  fieldOrigin         CrmFieldOrigin     @default(CUSTOM)
+  textValue           String?
+  numberValue         Float?
+  booleanValue        Boolean?
+  dateValue           DateTime?          @db.Date
+  datetimeValue       DateTime?          @db.Timestamp(3)
+  optionCrmInstanceId String?
+  optionModuleKey     String?
+  optionFieldId       String?
+  optionId            String?
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+  record              Contact            @relation("ContactValueRecord", fields: [crmInstanceId, recordId], references: [crmInstanceId, id], onDelete: Cascade)
+  field               CrmFieldDefinition @relation("ContactValueField", fields: [crmInstanceId, moduleKey, fieldId, fieldType, fieldOrigin], references: [crmInstanceId, moduleKey, id, fieldType, origin], onDelete: Restrict)
+  option              CrmFieldOption?    @relation("ContactValueOption", fields: [optionCrmInstanceId, optionModuleKey, optionFieldId, optionId], references: [crmInstanceId, moduleKey, fieldId, id], onDelete: Restrict)
+
+  @@unique([crmInstanceId, moduleKey, recordId, fieldId])
+  @@index([crmInstanceId, moduleKey, fieldId, recordId])
+}
+
+model CustomLeadFieldValue {
+  id                  String             @id @default(cuid())
+  crmInstanceId       String
+  moduleKey           String             @default("leads")
+  recordId            String
+  fieldId             String
+  fieldType           CrmFieldType
+  fieldOrigin         CrmFieldOrigin     @default(CUSTOM)
+  textValue           String?
+  numberValue         Float?
+  booleanValue        Boolean?
+  dateValue           DateTime?          @db.Date
+  datetimeValue       DateTime?          @db.Timestamp(3)
+  optionCrmInstanceId String?
+  optionModuleKey     String?
+  optionFieldId       String?
+  optionId            String?
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+  record              Lead               @relation("LeadValueRecord", fields: [crmInstanceId, recordId], references: [crmInstanceId, id], onDelete: Cascade)
+  field               CrmFieldDefinition @relation("LeadValueField", fields: [crmInstanceId, moduleKey, fieldId, fieldType, fieldOrigin], references: [crmInstanceId, moduleKey, id, fieldType, origin], onDelete: Restrict)
+  option              CrmFieldOption?    @relation("LeadValueOption", fields: [optionCrmInstanceId, optionModuleKey, optionFieldId, optionId], references: [crmInstanceId, moduleKey, fieldId, id], onDelete: Restrict)
+
+  @@unique([crmInstanceId, moduleKey, recordId, fieldId])
+  @@index([crmInstanceId, moduleKey, fieldId, recordId])
+}
+
+model CustomTaskFieldValue {
+  id                  String             @id @default(cuid())
+  crmInstanceId       String
+  moduleKey           String             @default("tasks")
+  recordId            String
+  fieldId             String
+  fieldType           CrmFieldType
+  fieldOrigin         CrmFieldOrigin     @default(CUSTOM)
+  textValue           String?
+  numberValue         Float?
+  booleanValue        Boolean?
+  dateValue           DateTime?          @db.Date
+  datetimeValue       DateTime?          @db.Timestamp(3)
+  optionCrmInstanceId String?
+  optionModuleKey     String?
+  optionFieldId       String?
+  optionId            String?
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+  record              Task               @relation("TaskValueRecord", fields: [crmInstanceId, recordId], references: [crmInstanceId, id], onDelete: Cascade)
+  field               CrmFieldDefinition @relation("TaskValueField", fields: [crmInstanceId, moduleKey, fieldId, fieldType, fieldOrigin], references: [crmInstanceId, moduleKey, id, fieldType, origin], onDelete: Restrict)
+  option              CrmFieldOption?    @relation("TaskValueOption", fields: [optionCrmInstanceId, optionModuleKey, optionFieldId, optionId], references: [crmInstanceId, moduleKey, fieldId, id], onDelete: Restrict)
+
+  @@unique([crmInstanceId, moduleKey, recordId, fieldId])
+  @@index([crmInstanceId, moduleKey, fieldId, recordId])
+}
+
+model CrmConfigurationAuditLog {
+  id            String   @id @default(cuid())
+  crmInstanceId String
+  moduleKey     String
+  entityType    String
+  entityId      String
+  action        String
+  actorUserId   String
+  details       Json?
+  createdAt     DateTime @default(now())
+
+  crmInstance CrmInstance @relation(fields: [crmInstanceId], references: [id], onDelete: Cascade)
+  actor       User        @relation(fields: [actorUserId], references: [id], onDelete: Cascade)
+
+  @@index([crmInstanceId, createdAt])
+  @@index([actorUserId, createdAt])
 }
 
 model Session {

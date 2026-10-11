@@ -1,7 +1,12 @@
 import Form from "next/form";
 import Link from "next/link";
+import {
+  getCustomFieldDefinitionsForModule,
+} from "@/lib/crm/custom-field-values";
 import { getCrmTenantContext } from "@/lib/crm/context";
 import { db } from "@/lib/db";
+import { CRM_PERMISSIONS } from "@/lib/crm/permissions";
+import { getCrmOperationalForm } from "@/lib/crm/runtime-forms";
 import ContactForm from "./contact-form";
 
 export default async function ContactsPage({
@@ -9,11 +14,11 @@ export default async function ContactsPage({
 }: {
   searchParams: Promise<{ q?: string; status?: string }>;
 }) {
-  const tenant = await getCrmTenantContext();
+  const tenant = await getCrmTenantContext(CRM_PERMISSIONS.CONTACTS_READ);
   const params = await searchParams;
   const query = (params.q ?? "").trim();
   const status = (params.status ?? "").trim();
-  const [contacts, companies] = await Promise.all([
+  const [contacts, companies, customFields, conditionalForm] = await Promise.all([
     db.contact.findMany({
       where: {
         crmInstanceId: tenant.crmId,
@@ -46,6 +51,15 @@ export default async function ContactsPage({
       where: { crmInstanceId: tenant.crmId },
       orderBy: { name: "asc" },
       select: { id: true, name: true },
+    }),
+    getCustomFieldDefinitionsForModule({
+      moduleKey: "contacts",
+      crmInstanceId: tenant.crmId,
+    }),
+    getCrmOperationalForm({
+      tenant,
+      moduleKey: "contacts",
+      operation: "create",
     }),
   ]);
 
@@ -125,7 +139,11 @@ export default async function ContactsPage({
           )}
         </section>
 
-        <ContactForm companies={companies} />
+        <ContactForm
+          companies={companies}
+          conditionalForm={conditionalForm}
+          customFields={customFields}
+        />
       </div>
     </div>
   );
